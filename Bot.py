@@ -1,12 +1,15 @@
-import os
-import json
 import logging
+import json
+import os
 from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 from telegram.constants import ParseMode
 
-# ------------------ CONFIG ------------------
+# --------------------------
+# YOUR SAME CONFIG
+# --------------------------
+
 BOT_TOKEN = "8529436226:AAEVYIFRyy57y2fUvTnlEzk65baYnmnJuNA"
 
 REQUIRED_CHANNELS = [
@@ -18,32 +21,38 @@ CONTENT_CHANNEL = "@stuffprovider_demo"
 ADMIN_IDS = [5967565554]
 
 DB_FILE = "videos_db.json"
-WEBHOOK_URL = os.getenv("RENDER_EXTERNAL_URL") + "/webhook"
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ---------------- DB ----------------
+# --------------------------
+# Load & Save Video DB
+# --------------------------
+
 def load_videos():
     if os.path.exists(DB_FILE):
         try:
-            return json.load(open(DB_FILE))
+            with open(DB_FILE, 'r') as f:
+                return json.load(f)
         except:
             return {}
     return {}
 
-def save_videos(v):
-    json.dump(v, open(DB_FILE, "w"))
-    logger.info("Saved video DB")
+def save_videos(videos):
+    with open(DB_FILE, 'w') as f:
+        json.dump(videos, f, indent=2)
 
 VIDEOS = load_videos()
 
-# ---------------- FUNCTIONS ----------------
-async def check_membership(user_id, context):
-    for channel in REQUIRED_CHANNELS:
+# --------------------------
+# Bot Logic
+# --------------------------
+
+async def check_membership(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    for c in REQUIRED_CHANNELS:
         try:
-            m = await context.bot.get_chat_member(channel["id"], user_id)
-            if m.status not in ["member", "administrator", "creator"]:
+            member = await context.bot.get_chat_member(chat_id=c["id"], user_id=user_id)
+            if member.status not in ["member", "administrator", "creator"]:
                 return False
         except:
             return False
@@ -51,50 +60,57 @@ async def check_membership(user_id, context):
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    user_id = user.id
+    user_id = update.effective_user.id
 
+    # If link contains video ID
     if context.args:
-        vid = context.args[0]
-        allowed = await check_membership(user_id, context)
+        video_id = context.args[0]
+        is_member = await check_membership(user_id, context)
 
-        if not allowed:
+        if not is_member:
             keyboard = [
                 [InlineKeyboardButton(f"Join {c['name']}", url=f"https://t.me/{c['username'][1:]}")]
                 for c in REQUIRED_CHANNELS
             ]
             keyboard.append([InlineKeyboardButton("Check Again", callback_data="check")])
 
-            context.user_data["pending"] = vid
-            return await update.message.reply_text("Join channels first:", reply_markup=InlineKeyboardMarkup(keyboard))
+            await update.message.reply_text(
+                "⚠️ Please join required channels:",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
 
-        if vid in VIDEOS:
-            return await update.message.reply_video(VIDEOS[vid])
+            context.user_data["pending"] = video_id
+            return
+
+        # Send video
+        if video_id in VIDEOS:
+            await update.message.reply_video(VIDEOS[video_id])
         else:
-            return await update.message.reply_text("Invalid ID")
+            await update.message.reply_text("Invalid video ID.")
+        return
 
-    await update.message.reply_text("Bot ready. Open a valid link.")
+    await update.message.reply_text("Welcome! Send a valid video link.")
 
 
-async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def callback_btn(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
 
-    ok = await check_membership(q.from_user.id, context)
+    if q.data == "check":
+        ok = await check_membership(q.from_user.id, context)
 
-    if not ok:
-        return await q.answer("Not joined!", show_alert=True)
+        if ok:
+            await q.edit_message_text("👍 Verified! Sending your video...")
+            if "pending" in context.user_data:
+                vid = context.user_data["pending"]
+                if vid in VIDEOS:
+                    await q.message.reply_video(VIDEOS[vid])
+                del context.user_data["pending"]
+        else:
+            await q.answer("❌ Still not joined!", show_alert=True)
 
-    await q.edit_message_text("Verified! Sending video…")
 
-    if "pending" in context.user_data:
-        vid = context.user_data["pending"]
-        if vid in VIDEOS:
-            await q.message.reply_video(VIDEOS[vid])
-        del context.user_data["pending"]
-
-
-async def addvideo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def add_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS:
         return await update.message.reply_text("Unauthorized")
 
@@ -102,7 +118,7 @@ async def addvideo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.message.reply_text("Send video with /addvideo ID")
 
     if not context.args:
-        return await update.message.reply_text("Missing ID")
+        return await update.message.reply_text("ID missing")
 
     vid = context.args[0]
     file_id = update.message.video.file_id
@@ -110,23 +126,25 @@ async def addvideo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     VIDEOS[vid] = file_id
     save_videos(VIDEOS)
 
-    bot_username = (await context.bot.get_me()).username
-    link = f"https://t.me/{bot_username}?start={vid}"
+    bot_user = await context.bot.get_me()
+    link = f"https://t.me/{bot_user.username}?start={vid}"
 
-    await update.message.reply_text(f"Added!\n\nID: {vid}\nLink:\n{link}")
+    await update.message.reply_text(f"✔️ Added\nID: {vid}\nLink:\n{link}")
 
 
-async def listvideos(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def videos_list(update: Update
+                      , context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS:
         return await update.message.reply_text("Unauthorized")
 
     if not VIDEOS:
-        return await update.message.reply_text("Empty.")
+        return await update.message.reply_text("No videos")
 
-    await update.message.reply_text("\n".join(VIDEOS.keys()))
+    txt = "\n".join([f"- {v}" for v in VIDEOS.keys()])
+    await update.message.reply_text(txt)
 
 
-async def delvideo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def del_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id not in ADMIN_IDS:
         return await update.message.reply_text("Unauthorized")
 
@@ -134,40 +152,44 @@ async def delvideo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await update.message.reply_text("Usage: /delvideo ID")
 
     vid = context.args[0]
+
     if vid in VIDEOS:
         del VIDEOS[vid]
         save_videos(VIDEOS)
-        return await update.message.reply_text("Deleted.")
-    return await update.message.reply_text("Not found")
+        await update.message.reply_text("Deleted!")
+    else:
+        await update.message.reply_text("Not found.")
 
 
-# ---------------- WEBHOOK SERVER ----------------
+# --------------------------
+# Flask + Webhook Setup
+# --------------------------
+
 app = Flask(__name__)
-application = Application.builder().token(BOT_TOKEN).build()
+
+application = (
+    Application.builder()
+    .token(BOT_TOKEN)
+    .build()
+)
 
 application.add_handler(CommandHandler("start", start))
-application.add_handler(CommandHandler("addvideo", addvideo))
-application.add_handler(CommandHandler("videos", listvideos))
-application.add_handler(CommandHandler("delvideo", delvideo))
-application.add_handler(CallbackQueryHandler(callback))
+application.add_handler(CommandHandler("addvideo", add_video))
+application.add_handler(CommandHandler("videos", videos_list))
+application.add_handler(CommandHandler("delvideo", del_video))
+application.add_handler(CallbackQueryHandler(callback_btn))
 
+@app.route("/", methods=["GET"])
+def home():
+    return "Bot is Running", 200
 
-@app.post("/webhook")
-async def process():
-    data = request.get_json()
+@app.route("/webhook", methods=["POST"])
+async def webhook():
+    data = request.get_json(force=True)
     update = Update.de_json(data, application.bot)
     await application.process_update(update)
     return "ok", 200
 
 
-@app.get("/")
-def home():
-    return "Bot is running on webhook", 200
-
-
 if __name__ == "__main__":
-    import asyncio
-    asyncio.get_event_loop().run_until_complete(
-        application.bot.set_webhook(WEBHOOK_URL)
-    )
     app.run(host="0.0.0.0", port=10000)
