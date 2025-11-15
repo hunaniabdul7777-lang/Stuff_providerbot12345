@@ -1,22 +1,16 @@
-# Railway Deployment Package
-
-## File 1: bot.py
-```python
 import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 from telegram.constants import ParseMode
 import os
 
-# Bot configuration
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "8529436226:AAEVYIFRyy57y2fUvTnlEzk65baYnmnJuNA")
+BOT_TOKEN = "8529436226:AAEVYIFRyy57y2fUvTnlEzk65baYnmnJuNA"
 REQUIRED_CHANNELS = [
     {"name": "Stuff Provider Demo", "username": "@stuffprovider_demo", "id": -1003340238856},
     {"name": "Stuff Provider Proofs", "username": "@stuffprovider_proofs", "id": -1001963037939}
 ]
 CONTENT_CHANNEL = "@stuffprovider_demo"
 ADMIN_IDS = [5967565554]
-
 VIDEOS = {}
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s', level=logging.INFO)
@@ -49,9 +43,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             reply_markup = InlineKeyboardMarkup(keyboard)
             await update.message.reply_text(
-                "🔒 <b>Access Denied!</b>\n\n"
-                "Pehle neeche diye channels join karo, phir 'Check Again' button dabao:\n\n"
-                "⚠️ <b>Important:</b> Saare channels join karna zaroori hai!",
+                "🔒 <b>Access Denied!</b>\n\nPehle neeche diye channels join karo, phir 'Check Again' button dabao:\n\n⚠️ <b>Important:</b> Saare channels join karna zaroori hai!",
                 reply_markup=reply_markup,
                 parse_mode=ParseMode.HTML
             )
@@ -80,11 +72,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             reply_markup = InlineKeyboardMarkup(keyboard)
             await update.message.reply_text(
-                f"👋 <b>Welcome {user.first_name}!</b>\n\n"
-                f"🔒 Bot use karne ke liye pehle yeh channels join karo:\n\n"
-                f"1️⃣ {REQUIRED_CHANNELS[0]['username']}\n"
-                f"2️⃣ {REQUIRED_CHANNELS[1]['username']}\n\n"
-                f"✅ Channels join karne ke baad 'Check Again' dabao!",
+                f"👋 <b>Welcome {user.first_name}!</b>\n\n🔒 Bot use karne ke liye pehle yeh channels join karo:\n\n1️⃣ {REQUIRED_CHANNELS[0]['username']}\n2️⃣ {REQUIRED_CHANNELS[1]['username']}\n\n✅ Channels join karne ke baad 'Check Again' dabao!",
                 reply_markup=reply_markup,
                 parse_mode=ParseMode.HTML
             )
@@ -92,9 +80,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             keyboard = [[InlineKeyboardButton("📢 Content Channel", url=f"https://t.me/{CONTENT_CHANNEL[1:]}")]]
             reply_markup = InlineKeyboardMarkup(keyboard)
             await update.message.reply_text(
-                f"✅ <b>Access Granted!</b>\n\n"
-                f"Aap ab bot use kar sakte ho!\n\n"
-                f"📢 Videos ke liye {CONTENT_CHANNEL} join karo aur wahan se links click karo!",
+                f"✅ <b>Access Granted!</b>\n\nAap ab bot use kar sakte ho!\n\n📢 Videos ke liye {CONTENT_CHANNEL} join karo aur wahan se links click karo!",
                 reply_markup=reply_markup,
                 parse_mode=ParseMode.HTML
             )
@@ -109,9 +95,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         if is_member:
             await query.edit_message_text(
-                f"✅ <b>Verified!</b>\n\n"
-                f"Aap ab bot use kar sakte ho!\n\n"
-                f"📢 Videos ke liye {CONTENT_CHANNEL} channel se links click karo!",
+                f"✅ <b>Verified!</b>\n\nAap ab bot use kar sakte ho!\n\n📢 Videos ke liye {CONTENT_CHANNEL} channel se links click karo!",
                 parse_mode=ParseMode.HTML
             )
             
@@ -134,10 +118,7 @@ async def add_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if not update.message.video:
         await update.message.reply_text(
-            "📹 <b>How to add video:</b>\n\n"
-            "1. Video bhejo\n"
-            "2. Caption: /addvideo video_id\n\n"
-            "Example: /addvideo video_3",
+            "📹 <b>How to add video:</b>\n\n1. Video bhejo\n2. Caption: /addvideo video_id\n\nExample: /addvideo video_3",
             parse_mode=ParseMode.HTML
         )
         return
@@ -154,10 +135,7 @@ async def add_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     share_link = f"https://t.me/{bot_username}?start={video_id}"
     
     await update.message.reply_text(
-        f"✅ <b>Video Added!</b>\n\n"
-        f"🆔 ID: <code>{video_id}</code>\n"
-        f"🔗 Link:\n<code>{share_link}</code>\n\n"
-        f"Is link ko channel mein share karo!",
+        f"✅ <b>Video Added!</b>\n\n🆔 ID: <code>{video_id}</code>\n🔗 Link:\n<code>{share_link}</code>\n\nIs link ko channel mein share karo!",
         parse_mode=ParseMode.HTML
     )
 
@@ -171,71 +149,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-```
-
-## File 2: requirements.txt
-```
-python-telegram-bot==21.5
-```
-
-## File 3: Procfile
-```
-worker: python bot.py
-```
-
-## File 4: runtime.txt
-```
-python-3.11.0
-```
-
----
-
-# Deployment Instructions
-
-## Method 1: Using GitHub (Recommended)
-
-1. **Create GitHub Repository:**
-   - Go to github.com
-   - Click "New Repository"
-   - Name: `telegram-bot`
-   - Make it Public
-   - Click "Create Repository"
-
-2. **Upload Files:**
-   - Click "uploading an existing file"
-   - Upload all 4 files (bot.py, requirements.txt, Procfile, runtime.txt)
-   - Click "Commit changes"
-
-3. **Deploy on Railway:**
-   - Go to railway.app
-   - Click "New Project"
-   - Select "Deploy from GitHub repo"
-   - Select your `telegram-bot` repository
-   - Railway will auto-deploy!
-
-## Method 2: Using Railway CLI (Advanced)
-
-```bash
-# Install Railway CLI
-npm i -g @railway/cli
-
-# Login
-railway login
-
-# Initialize project
-railway init
-
-# Deploy
-railway up
-```
-
----
-
-# Post-Deployment
-
-1. Bot automatically 24/7 chalega
-2. Railway dashboard mein logs dekh sakte ho
-3. Video add karne ke liye bot ko message karo
-4. Channels mein bot ko admin banana mat bhoolna!
-
-✅ Done! Your bot is live 24/7!
