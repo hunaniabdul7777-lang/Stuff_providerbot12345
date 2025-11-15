@@ -5,10 +5,9 @@ from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
-    ContextTypes, Dispatcher
+    ContextTypes
 )
 from telegram.constants import ParseMode
-from telegram import Bot
 
 # --------------------------
 # SAME CONFIG AS YOUR OLD BOT
@@ -49,6 +48,7 @@ def save_videos(videos):
 
 VIDEOS = load_videos()
 
+
 # --------------------------
 # Bot Functions (UNCHANGED)
 # --------------------------
@@ -68,6 +68,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_id = user.id
 
+    # /start videoID
     if context.args:
         video_id = context.args[0]
         is_member = await check_membership(user_id, context)
@@ -78,21 +79,22 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 for c in REQUIRED_CHANNELS
             ]
             keyboard.append([InlineKeyboardButton("Check Again", callback_data="check_membership")])
+
             await update.message.reply_text(
                 "Join required channels:", reply_markup=InlineKeyboardMarkup(keyboard)
             )
+
             context.user_data['pending_video'] = video_id
             return
 
-        # Send video if allowed
+        # Send video
         if video_id in VIDEOS:
             await update.message.reply_video(VIDEOS[video_id])
         else:
             await update.message.reply_text("Invalid video ID.")
         return
 
-    # Normal start
-    await update.message.reply_text("Welcome! Click valid video link.")
+    await update.message.reply_text("Welcome! Send a valid video link.")
 
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -110,6 +112,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if vid in VIDEOS:
                     await query.message.reply_video(VIDEOS[vid])
                 del context.user_data['pending_video']
+
         else:
             await query.answer("Not joined!", show_alert=True)
 
@@ -164,34 +167,38 @@ async def delete_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # --------------------------
-# FLASK WEBHOOK SERVER
+# FLASK + WEBHOOK
 # --------------------------
 
 app = Flask(__name__)
-bot = Bot(BOT_TOKEN)
 
-dispatcher = Dispatcher(bot, None, workers=0)
-application = Application.builder().bot(bot).build()
+application = Application.builder().token(BOT_TOKEN).build()
 
 # Handlers
-dispatcher.add_handler(CommandHandler("start", start))
-dispatcher.add_handler(CommandHandler("addvideo", add_video))
-dispatcher.add_handler(CommandHandler("videos", list_videos))
-dispatcher.add_handler(CommandHandler("delvideo", delete_video))
-dispatcher.add_handler(CallbackQueryHandler(button_callback))
+application.add_handler(CommandHandler("start", start))
+application.add_handler(CommandHandler("addvideo", add_video))
+application.add_handler(CommandHandler("videos", list_videos))
+application.add_handler(CommandHandler("delvideo", delete_video))
+application.add_handler(CallbackQueryHandler(button_callback))
 
 
-@app.route("/", methods=["GET"])
+@app.get("/")
 def home():
-    return "Bot is running!", 200
+    return "Bot running!", 200
 
 
-@app.route(f"/webhook", methods=["POST"])
+@app.post("/webhook")
 def webhook():
-    update = Update.de_json(request.get_json(force=True), bot)
-    dispatcher.process_update(update)
+    update = Update.de_json(request.get_json(force=True), application.bot)
+    application.update_queue.put_nowait(update)
     return "ok", 200
 
 
+# Start Flask (Render)
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
+    port = int(os.environ.get("PORT", 10000))
+    application.run_webhook(
+        listen="0.0.0.0",
+        port=port,
+        webhook_url=f"{os.environ.get('RENDER_EXTERNAL_URL')}/webhook"
+        )
