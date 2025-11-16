@@ -2,6 +2,8 @@ import logging
 import json
 import os
 from datetime import datetime
+from threading import Thread
+from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 from telegram.constants import ParseMode
@@ -16,6 +18,17 @@ ADMIN_IDS = [5967565554]
 
 DB_FILE = "videos_db.json"
 STATS_FILE = "stats_db.json"
+
+# Flask app for Render port binding
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return f"Bot is running! Users: {len(STATS.get('total_users', set()))}, Videos: {len(VIDEOS)}"
+
+@app.route('/health')
+def health():
+    return "OK"
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -456,6 +469,16 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 def main():
+    # Start Flask server in background thread
+    def run_flask():
+        port = int(os.environ.get("PORT", 10000))
+        app.run(host="0.0.0.0", port=port)
+    
+    flask_thread = Thread(target=run_flask)
+    flask_thread.daemon = True
+    flask_thread.start()
+    
+    # Start Telegram bot
     application = Application.builder().token(BOT_TOKEN).build()
     
     # User commands
