@@ -5,13 +5,20 @@ from datetime import datetime
 from threading import Thread
 from flask import Flask, request, jsonify
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
+from telegram.ext import (
+    Application, 
+    CommandHandler, 
+    CallbackQueryHandler, 
+    ContextTypes,
+    filters,
+    MessageHandler
+)
 from telegram.constants import ParseMode
 
 # ============================================
 # CONFIGURATION
 # ============================================
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "8529436226:AAEVYIFRyy57y2fUvTnlEzk65baYnmnJuNA")
+BOT_TOKEN = "8529436226:AAEVYIFRyy57y2fUvTnlEzk65baYnmnJuNA"
 REQUIRED_CHANNELS = [
     {"name": "Stuff Provider Demo", "username": "@stuffprovider_demo", "id": -1003340238856},
     {"name": "Stuff Provider Proofs", "username": "@stuffprovider_proofs", "id": -1001963037939}
@@ -187,10 +194,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = user.id
     username = user.username
     track_user(user_id, username)
+    
+    logger.info(f"Start command received from user {user_id}")
 
     # Deep link handler
     if context.args:
         video_id = context.args[0]
+        logger.info(f"Deep link with video_id: {video_id}")
         is_member = await check_membership(user_id, context)
         
         if not is_member:
@@ -253,12 +263,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /help command"""
     user_id = update.effective_user.id
+    logger.info(f"Help command received from user {user_id}")
     
     if user_id in ADMIN_IDS:
         help_text = (
             "👑 <b>Admin Commands:</b>\n\n"
             "📹 <b>Video Management:</b>\n"
-            "• /addvideo [id] - Add new video\n"
+            "• /addvideo [id] - Add new video (send video with caption)\n"
             "• /delvideo [id] - Delete video\n"
             "• /videos - List all videos\n"
             "• /topvideos - Most viewed videos\n\n"
@@ -267,8 +278,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "• /dailystats - Daily analytics\n"
             "• /users - User list\n\n"
             "📢 <b>Communication:</b>\n"
-            "• /broadcast [msg] - Send to all users\n"
-            "• /announce [msg] - Send announcement"
+            "• /broadcast [msg] - Send to all users"
         )
     else:
         help_text = (
@@ -285,14 +295,14 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def about_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /about command"""
+    logger.info(f"About command received from user {update.effective_user.id}")
     total_views = sum(STATS["video_views"].values())
     
     about_text = (
         "🤖 <b>Stuff Provider Bot</b>\n\n"
         f"👥 Total Users: {len(STATS['total_users'])}\n"
         f"🎥 Total Videos: {len(VIDEOS)}\n"
-        f"👀 Total Views: {total_views}\n"
-        f"📅 Started: Today\n\n"
+        f"👀 Total Views: {total_views}\n\n"
         "🔥 <b>Features:</b>\n"
         "• Unlimited video access\n"
         "• Channel-based verification\n"
@@ -306,6 +316,7 @@ async def about_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def my_activity(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /myactivity command"""
     uid = str(update.effective_user.id)
+    logger.info(f"Activity command received from user {uid}")
     activity = STATS["user_activity"].get(uid)
     
     if activity:
@@ -327,6 +338,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
+    logger.info(f"Button callback from user {user_id}: {query.data}")
     
     if query.data == "check_membership":
         is_member = await check_membership(user_id, context)
@@ -362,19 +374,25 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ============================================
 async def add_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Add new video - Admin only"""
-    if update.effective_user.id not in ADMIN_IDS:
-        return await update.message.reply_text("❌ Unauthorized access!")
+    user_id = update.effective_user.id
+    logger.info(f"Add video command from user {user_id}")
+    
+    if user_id not in ADMIN_IDS:
+        await update.message.reply_text("❌ Unauthorized access!")
+        return
     
     if not update.message.video:
-        return await update.message.reply_text(
+        await update.message.reply_text(
             "📹 <b>Usage:</b>\n"
             "1. Send a video\n"
             "2. Add caption: <code>/addvideo video_id</code>",
             parse_mode=ParseMode.HTML
         )
+        return
     
     if not context.args:
-        return await update.message.reply_text("❌ Video ID missing! Use: /addvideo [id]")
+        await update.message.reply_text("❌ Video ID missing! Use: /addvideo [id]")
+        return
     
     vid_id = context.args[0]
     VIDEOS[vid_id] = update.message.video.file_id
@@ -390,15 +408,19 @@ async def add_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📊 Total Videos: {len(VIDEOS)}",
         parse_mode=ParseMode.HTML
     )
-    logger.info(f"Admin {update.effective_user.id} added video {vid_id}")
+    logger.info(f"Admin {user_id} added video {vid_id}")
 
 async def list_videos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """List all videos - Admin only"""
-    if update.effective_user.id not in ADMIN_IDS:
+    user_id = update.effective_user.id
+    logger.info(f"List videos command from user {user_id}")
+    
+    if user_id not in ADMIN_IDS:
         return
     
     if not VIDEOS:
-        return await update.message.reply_text("❌ No videos in database!")
+        await update.message.reply_text("❌ No videos in database!")
+        return
     
     video_list = "\n".join([f"• <code>{vid}</code>" for vid in list(VIDEOS.keys())[:50]])
     
@@ -409,11 +431,15 @@ async def list_videos(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def delete_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Delete video - Admin only"""
-    if update.effective_user.id not in ADMIN_IDS:
+    user_id = update.effective_user.id
+    logger.info(f"Delete video command from user {user_id}")
+    
+    if user_id not in ADMIN_IDS:
         return
     
     if not context.args:
-        return await update.message.reply_text("❌ Usage: /delvideo [video_id]")
+        await update.message.reply_text("❌ Usage: /delvideo [video_id]")
+        return
     
     vid = context.args[0]
     
@@ -432,7 +458,10 @@ async def delete_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show bot statistics - Admin only"""
-    if update.effective_user.id not in ADMIN_IDS:
+    user_id = update.effective_user.id
+    logger.info(f"Stats command from user {user_id}")
+    
+    if user_id not in ADMIN_IDS:
         return
     
     total_views = sum(STATS["video_views"].values())
@@ -451,7 +480,10 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def daily_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show daily statistics - Admin only"""
-    if update.effective_user.id not in ADMIN_IDS:
+    user_id = update.effective_user.id
+    logger.info(f"Daily stats command from user {user_id}")
+    
+    if user_id not in ADMIN_IDS:
         return
     
     today = datetime.now().strftime("%Y-%m-%d")
@@ -467,11 +499,15 @@ async def daily_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def top_videos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Show top viewed videos - Admin only"""
-    if update.effective_user.id not in ADMIN_IDS:
+    user_id = update.effective_user.id
+    logger.info(f"Top videos command from user {user_id}")
+    
+    if user_id not in ADMIN_IDS:
         return
     
     if not STATS["video_views"]:
-        return await update.message.reply_text("❌ No video views yet!")
+        await update.message.reply_text("❌ No video views yet!")
+        return
     
     sorted_vids = sorted(STATS["video_views"].items(), key=lambda x: x[1], reverse=True)[:10]
     text = "\n".join([f"{i+1}. <code>{v}</code> - {c} views" for i, (v, c) in enumerate(sorted_vids)])
@@ -483,14 +519,18 @@ async def top_videos(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Broadcast message to all users - Admin only"""
-    if update.effective_user.id not in ADMIN_IDS:
+    user_id = update.effective_user.id
+    logger.info(f"Broadcast command from user {user_id}")
+    
+    if user_id not in ADMIN_IDS:
         return
     
     if not context.args:
-        return await update.message.reply_text(
+        await update.message.reply_text(
             "📢 <b>Usage:</b>\n<code>/broadcast Your message here</code>",
             parse_mode=ParseMode.HTML
         )
+        return
     
     msg = " ".join(context.args)
     success = 0
@@ -514,37 +554,11 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Update progress every 10 users
         if i % 10 == 0:
             progress = int((i / total_users) * 100)
-            await status_msg.edit_text(f"📤 Broadcasting... {progress}%")
+            try:
+                await status_msg.edit_text(f"📤 Broadcasting... {progress}%")
+            except:
+                pass
     
     await status_msg.edit_text(
         f"✅ <b>Broadcast Complete!</b>\n\n"
-        f"✔️ Sent: {success}\n"
-        f"❌ Failed: {failed}\n"
-        f"📊 Total: {total_users}",
-        parse_mode=ParseMode.HTML
-    )
-    logger.info(f"Broadcast completed: {success} sent, {failed} failed")
-
-async def users_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """List users - Admin only"""
-    if update.effective_user.id not in ADMIN_IDS:
-        return
-    
-    users_info = []
-    for uid in list(STATS["user_activity"].keys())[:20]:
-        user = STATS["user_activity"][uid]
-        username = user.get("username", "N/A")
-        requests = user.get("total_requests", 0)
-        users_info.append(f"• {username} - {requests} requests")
-    
-    text = "\n".join(users_info)
-    await update.message.reply_text(
-        f"👥 <b>Recent Users (showing 20):</b>\n\n{text}\n\n"
-        f"📊 Total: {len(STATS['total_users'])} users",
-        parse_mode=ParseMode.HTML
-    )
-
-# ============================================
-# ERROR HANDLER
-# ============================================
-async def error_handler(update: Update, context: Cont
+   
