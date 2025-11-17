@@ -2,563 +2,530 @@ import logging
 import json
 import os
 from datetime import datetime
-from threading import Thread
-from flask import Flask, request, jsonify
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    Application, 
-    CommandHandler, 
-    CallbackQueryHandler, 
-    ContextTypes,
-    filters,
-    MessageHandler
-)
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 from telegram.constants import ParseMode
 
-# ============================================
-# CONFIGURATION
-# ============================================
+# ========== CONFIGURATION ==========
 BOT_TOKEN = "8529436226:AAEVYIFRyy57y2fUvTnlEzk65baYnmnJuNA"
+
 REQUIRED_CHANNELS = [
     {"name": "Stuff Provider Demo", "username": "@stuffprovider_demo", "id": -1003340238856},
     {"name": "Stuff Provider Proofs", "username": "@stuffprovider_proofs", "id": -1001963037939}
 ]
+
 CONTENT_CHANNEL = "@stuffprovider_demo"
 ADMIN_IDS = [5967565554]
 
 DB_FILE = "videos_db.json"
 STATS_FILE = "stats_db.json"
 
-# ============================================
-# FLASK APP (Web Interface)
-# ============================================
-app = Flask(__name__)
-
-@app.route('/')
-def home():
-    return jsonify({
-        "status": "running",
-        "bot": "Stuff Provider Bot",
-        "version": "2.0",
-        "timestamp": datetime.now().isoformat()
-    })
-
-@app.route('/health')
-def health():
-    return jsonify({"status": "healthy", "uptime": "ok"})
-
-@app.route('/stats')
-def web_stats():
-    """Public stats endpoint"""
-    return jsonify({
-        "total_users": len(STATS['total_users']),
-        "total_videos": len(VIDEOS),
-        "total_views": sum(STATS["video_views"].values())
-    })
-
-# ============================================
-# LOGGING SETUP
-# ============================================
+# ========== LOGGING ==========
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO,
-    handlers=[
-        logging.FileHandler('bot.log'),
-        logging.StreamHandler()
-    ]
+    level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# ============================================
-# DATABASE FUNCTIONS
-# ============================================
+# ========== DATABASE FUNCTIONS ==========
 def load_videos():
-    """Load videos database"""
     if os.path.exists(DB_FILE):
         try:
-            with open(DB_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except Exception as e:
-            logger.error(f"Error loading videos: {e}")
+            with open(DB_FILE, 'r') as f:
+                data = json.load(f)
+                logger.info(f"Loaded {len(data)} videos")
+                return data
+        except:
             return {}
     return {}
 
 def save_videos(videos):
-    """Save videos database"""
     try:
-        with open(DB_FILE, 'w', encoding='utf-8') as f:
-            json.dump(videos, f, indent=2, ensure_ascii=False)
-        logger.info(f"Saved {len(videos)} videos to database")
+        with open(DB_FILE, 'w') as f:
+            json.dump(videos, f, indent=2)
+        logger.info(f"Saved {len(videos)} videos")
+        return True
     except Exception as e:
-        logger.error(f"Error saving videos: {e}")
+        logger.error(f"Error saving: {e}")
+        return False
 
 def load_stats():
-    """Load statistics database"""
     if os.path.exists(STATS_FILE):
         try:
-            with open(STATS_FILE, 'r', encoding='utf-8') as f:
+            with open(STATS_FILE, 'r') as f:
                 data = json.load(f)
-                data["total_users"] = set(data.get("total_users", []))
+                if isinstance(data.get("total_users"), list):
+                    data["total_users"] = set(data["total_users"])
                 return data
-        except Exception as e:
-            logger.error(f"Error loading stats: {e}")
-    return {
-        "total_users": set(),
-        "video_views": {},
-        "user_activity": {},
-        "daily_stats": {}
-    }
+        except:
+            pass
+    return {"total_users": set(), "video_views": {}, "user_activity": {}}
 
 def save_stats(stats):
-    """Save statistics database"""
     try:
         stats_copy = stats.copy()
         stats_copy["total_users"] = list(stats["total_users"])
-        with open(STATS_FILE, 'w', encoding='utf-8') as f:
-            json.dump(stats_copy, f, indent=2, ensure_ascii=False)
-    except Exception as e:
-        logger.error(f"Error saving stats: {e}")
+        with open(STATS_FILE, 'w') as f:
+            json.dump(stats_copy, f, indent=2)
+        return True
+    except:
+        return False
 
-# Initialize databases
 VIDEOS = load_videos()
 STATS = load_stats()
-logger.info(f"✅ Loaded {len(VIDEOS)} videos and {len(STATS['total_users'])} users")
 
-# ============================================
-# TRACKING & ANALYTICS
-# ============================================
-def track_user(user_id, username=None):
-    """Track user activity"""
-    STATS["total_users"].add(user_id)
-    uid = str(user_id)
-    
-    if uid not in STATS["user_activity"]:
-        STATS["user_activity"][uid] = {
-            "first_seen": datetime.now().isoformat(),
-            "total_requests": 0,
-            "username": username
-        }
-    
-    STATS["user_activity"][uid]["total_requests"] += 1
-    STATS["user_activity"][uid]["last_seen"] = datetime.now().isoformat()
-    if username:
-        STATS["user_activity"][uid]["username"] = username
-    
-    # Daily stats
-    today = datetime.now().strftime("%Y-%m-%d")
-    if today not in STATS.get("daily_stats", {}):
-        STATS.setdefault("daily_stats", {})[today] = {"users": set(), "requests": 0}
-    STATS["daily_stats"][today]["users"].add(user_id)
-    STATS["daily_stats"][today]["requests"] += 1
-    
-    save_stats(STATS)
+# ========== TRACKING ==========
+def track_user(user_id):
+    try:
+        STATS["total_users"].add(user_id)
+        user_str = str(user_id)
+        if user_str not in STATS["user_activity"]:
+            STATS["user_activity"][user_str] = {
+                "first_seen": datetime.now().isoformat(),
+                "total_requests": 0,
+                "videos_watched": 0
+            }
+        STATS["user_activity"][user_str]["total_requests"] += 1
+        STATS["user_activity"][user_str]["last_seen"] = datetime.now().isoformat()
+        save_stats(STATS)
+    except:
+        pass
 
-def track_video_view(video_id):
-    """Track video views"""
-    if video_id not in STATS["video_views"]:
-        STATS["video_views"][video_id] = 0
-    STATS["video_views"][video_id] += 1
-    save_stats(STATS)
+def track_video_view(video_id, user_id):
+    try:
+        if video_id not in STATS["video_views"]:
+            STATS["video_views"][video_id] = 0
+        STATS["video_views"][video_id] += 1
+        
+        user_str = str(user_id)
+        if user_str in STATS["user_activity"]:
+            STATS["user_activity"][user_str]["videos_watched"] += 1
+        save_stats(STATS)
+    except:
+        pass
 
-# ============================================
-# MEMBERSHIP CHECK
-# ============================================
-async def check_membership(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    """Check if user is member of required channels"""
+# ========== MEMBERSHIP CHECK ==========
+async def check_membership(user_id: int, context: ContextTypes.DEFAULT_TYPE):
+    not_joined = []
     for channel in REQUIRED_CHANNELS:
         try:
             member = await context.bot.get_chat_member(chat_id=channel["id"], user_id=user_id)
             if member.status not in ['member', 'administrator', 'creator']:
-                logger.info(f"User {user_id} not member of {channel['name']}")
-                return False
-        except Exception as e:
-            logger.error(f"Membership check error for {channel['name']}: {e}")
-            return False
-    return True
+                not_joined.append(channel)
+        except:
+            not_joined.append(channel)
+    return (len(not_joined) == 0, not_joined)
 
-def create_join_keyboard():
-    """Create join channels keyboard"""
-    keyboard = [
-        [InlineKeyboardButton(f"✅ Join {c['name']}", url=f"https://t.me/{c['username'][1:]}")] 
-        for c in REQUIRED_CHANNELS
-    ]
-    keyboard.append([InlineKeyboardButton("🔄 Check Again", callback_data="check_membership")])
-    return InlineKeyboardMarkup(keyboard)
-
-# ============================================
-# USER COMMANDS
-# ============================================
+# ========== START COMMAND ==========
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /start command"""
     user = update.effective_user
     user_id = user.id
-    username = user.username
-    track_user(user_id, username)
+    track_user(user_id)
     
-    logger.info(f"Start command received from user {user_id}")
-
-    # Deep link handler
     if context.args:
         video_id = context.args[0]
-        logger.info(f"Deep link with video_id: {video_id}")
-        is_member = await check_membership(user_id, context)
+        is_member, not_joined = await check_membership(user_id, context)
         
         if not is_member:
-            context.user_data['pending_video'] = video_id
+            keyboard = []
+            for channel in not_joined:
+                keyboard.append([InlineKeyboardButton(f"✅ Join {channel['name']}", url=f"https://t.me/{channel['username'][1:]}")])
+            keyboard.append([InlineKeyboardButton("✔️ Verify", callback_data=f"check_{video_id}")])
+            
             await update.message.reply_text(
-                f"👋 <b>Hey {user.first_name}!</b>\n\n"
-                "🔒 <b>Access Denied!</b>\n"
-                "Pehle niche diye gaye channels join karo, phir 'Check Again' button dabao!\n\n"
-                "✨ <i>Unlimited videos dekho after joining!</i>",
-                reply_markup=create_join_keyboard(),
+                "🔒 <b>Access Denied!</b>\n\nPehle channels join karo:\n\n⚠️ Saare channels zaroori hain!",
+                reply_markup=InlineKeyboardMarkup(keyboard),
                 parse_mode=ParseMode.HTML
             )
             return
         
-        # Send video if member
         if video_id in VIDEOS:
-            track_video_view(video_id)
-            await update.message.reply_video(
-                video=VIDEOS[video_id],
-                caption=f"✅ <b>Enjoy your video!</b>\n\n"
-                        f"🔔 More videos: {CONTENT_CHANNEL}\n"
-                        f"👥 Share with friends!",
-                parse_mode=ParseMode.HTML
-            )
-            logger.info(f"Video {video_id} sent to user {user_id}")
+            try:
+                track_video_view(video_id, user_id)
+                await update.message.reply_video(
+                    video=VIDEOS[video_id],
+                    caption=f"✅ <b>Enjoy!</b>\n\n🔔 {CONTENT_CHANNEL}",
+                    parse_mode=ParseMode.HTML
+                )
+            except Exception as e:
+                await update.message.reply_text(f"❌ Error: {str(e)}")
         else:
-            await update.message.reply_text(
-                "❌ <b>Invalid Link!</b>\n\n"
-                f"Nayi video links ke liye {CONTENT_CHANNEL} check karo!",
-                parse_mode=ParseMode.HTML
-            )
+            await update.message.reply_text("❌ Invalid video link!")
     else:
-        # Regular start command
-        is_member = await check_membership(user_id, context)
+        is_member, not_joined = await check_membership(user_id, context)
         
         if not is_member:
+            keyboard = []
+            for channel in not_joined:
+                keyboard.append([InlineKeyboardButton(f"✅ Join {channel['name']}", url=f"https://t.me/{channel['username'][1:]}")])
+            keyboard.append([InlineKeyboardButton("✔️ Verify", callback_data="check_membership")])
+            
             await update.message.reply_text(
                 f"👋 <b>Welcome {user.first_name}!</b>\n\n"
-                "🎥 <b>Unlimited Videos Access ke liye:</b>\n"
-                "1️⃣ Niche diye channels join karo\n"
-                "2️⃣ 'Check Again' button dabao\n"
-                "3️⃣ Videos enjoy karo! 🍿\n\n"
-                "💡 <i>100% free hai!</i>",
-                reply_markup=create_join_keyboard(),
+                f"🎬 Premium Video Bot\n\n"
+                f"Channels join karo:\n"
+                f"1️⃣ {REQUIRED_CHANNELS[0]['username']}\n"
+                f"2️⃣ {REQUIRED_CHANNELS[1]['username']}",
+                reply_markup=InlineKeyboardMarkup(keyboard),
                 parse_mode=ParseMode.HTML
             )
         else:
+            keyboard = [
+                [InlineKeyboardButton("📢 Content", url=f"https://t.me/{CONTENT_CHANNEL[1:]}")],
+                [InlineKeyboardButton("ℹ️ Help", callback_data="help")]
+            ]
             await update.message.reply_text(
-                f"✅ <b>Welcome Back, {user.first_name}!</b>\n\n"
-                f"🎬 <b>Access Granted!</b>\n"
-                f"📢 {CONTENT_CHANNEL} se video links click karo!\n\n"
-                "📋 Commands:\n"
-                "• /help - Bot commands\n"
-                "• /about - Bot info\n"
-                "• /myactivity - Your stats\n\n"
-                "🎉 <i>Enjoy unlimited videos!</i>",
+                f"✅ <b>Welcome {user.first_name}!</b>\n\n"
+                f"Access granted!\n\n"
+                f"📢 {CONTENT_CHANNEL} se links click karo!\n\n"
+                f"💡 /help for commands",
+                reply_markup=InlineKeyboardMarkup(keyboard),
                 parse_mode=ParseMode.HTML
             )
 
+# ========== HELP COMMAND ==========
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /help command"""
     user_id = update.effective_user.id
-    logger.info(f"Help command received from user {user_id}")
     
     if user_id in ADMIN_IDS:
-        help_text = (
-            "👑 <b>Admin Commands:</b>\n\n"
-            "📹 <b>Video Management:</b>\n"
-            "• /addvideo [id] - Add new video (send video with caption)\n"
-            "• /delvideo [id] - Delete video\n"
-            "• /videos - List all videos\n"
-            "• /topvideos - Most viewed videos\n\n"
-            "📊 <b>Analytics:</b>\n"
-            "• /stats - Bot statistics\n"
-            "• /dailystats - Daily analytics\n"
-            "• /users - User list\n\n"
-            "📢 <b>Communication:</b>\n"
-            "• /broadcast [msg] - Send to all users"
+        text = (
+            "👑 <b>ADMIN COMMANDS</b>\n\n"
+            "📹 Videos:\n"
+            "/addvideo /videos /delvideo /search\n\n"
+            "📊 Stats:\n"
+            "/stats /topvideos /users /recent\n\n"
+            "📢 Other:\n"
+            "/broadcast /backup\n\n"
+            "👤 User:\n"
+            "/start /help /about /myactivity"
         )
     else:
-        help_text = (
-            "ℹ️ <b>User Commands:</b>\n\n"
-            "• /start - Start bot\n"
-            "• /help - Show this help\n"
-            "• /about - Bot information\n"
-            "• /myactivity - Your activity stats\n\n"
-            f"📢 Get videos from: {CONTENT_CHANNEL}\n"
-            "💡 Click video links to watch!"
+        text = (
+            "ℹ️ <b>COMMANDS</b>\n\n"
+            "/start - Start bot\n"
+            "/help - This message\n"
+            "/about - Bot info\n"
+            "/myactivity - Your stats"
         )
     
-    await update.message.reply_text(help_text, parse_mode=ParseMode.HTML)
+    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
+# ========== ABOUT COMMAND ==========
 async def about_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /about command"""
-    logger.info(f"About command received from user {update.effective_user.id}")
     total_views = sum(STATS["video_views"].values())
-    
-    about_text = (
-        "🤖 <b>Stuff Provider Bot</b>\n\n"
-        f"👥 Total Users: {len(STATS['total_users'])}\n"
-        f"🎥 Total Videos: {len(VIDEOS)}\n"
-        f"👀 Total Views: {total_views}\n\n"
-        "🔥 <b>Features:</b>\n"
-        "• Unlimited video access\n"
-        "• Channel-based verification\n"
-        "• Fast video delivery\n"
-        "• Regular updates\n\n"
+    text = (
+        f"🤖 <b>ABOUT BOT</b>\n\n"
+        f"👥 Users: {len(STATS['total_users'])}\n"
+        f"🎥 Videos: {len(VIDEOS)}\n"
+        f"👁 Views: {total_views}\n\n"
         f"📢 Channel: {CONTENT_CHANNEL}"
     )
-    
-    await update.message.reply_text(about_text, parse_mode=ParseMode.HTML)
+    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
-async def my_activity(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /myactivity command"""
-    uid = str(update.effective_user.id)
-    logger.info(f"Activity command received from user {uid}")
-    activity = STATS["user_activity"].get(uid)
+# ========== MY ACTIVITY ==========
+async def my_activity_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_user.id)
     
-    if activity:
-        first_seen = datetime.fromisoformat(activity['first_seen']).strftime("%d %b %Y")
-        activity_text = (
-            "📊 <b>Your Activity Stats:</b>\n\n"
-            f"📅 Member Since: {first_seen}\n"
-            f"🔢 Total Requests: {activity['total_requests']}\n"
-            f"📺 Videos Watched: Available soon\n\n"
-            "✨ <i>Keep enjoying videos!</i>"
+    if user_id in STATS["user_activity"]:
+        activity = STATS["user_activity"][user_id]
+        first = datetime.fromisoformat(activity["first_seen"]).strftime("%d %b %Y")
+        last = datetime.fromisoformat(activity["last_seen"]).strftime("%d %b, %I:%M %p")
+        
+        text = (
+            f"📊 <b>YOUR ACTIVITY</b>\n\n"
+            f"🆔 ID: <code>{user_id}</code>\n"
+            f"📅 First: {first}\n"
+            f"🕐 Last: {last}\n"
+            f"📈 Requests: {activity['total_requests']}\n"
+            f"🎬 Videos: {activity.get('videos_watched', 0)}"
         )
     else:
-        activity_text = "❌ <b>No activity data found!</b>\n\nStart watching videos to see stats."
+        text = "❌ No activity data!"
     
-    await update.message.reply_text(activity_text, parse_mode=ParseMode.HTML)
+    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
+# ========== BUTTON CALLBACK ==========
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle callback queries"""
     query = update.callback_query
     await query.answer()
-    user_id = query.from_user.id
-    logger.info(f"Button callback from user {user_id}: {query.data}")
     
-    if query.data == "check_membership":
-        is_member = await check_membership(user_id, context)
-        
+    user_id = query.from_user.id
+    data = query.data
+    
+    if data == "check_membership":
+        is_member, _ = await check_membership(user_id, context)
         if is_member:
             await query.edit_message_text(
-                f"✅ <b>Verified Successfully!</b>\n\n"
-                f"🎉 Ab tum videos dekh sakte ho!\n"
-                f"📢 {CONTENT_CHANNEL} pe jao aur video links click karo!\n\n"
-                "💡 Enjoy unlimited content! 🍿",
+                f"✅ <b>Verified!</b>\n\n📢 {CONTENT_CHANNEL} se links click karo!",
                 parse_mode=ParseMode.HTML
             )
-            
-            # Send pending video if exists
-            if 'pending_video' in context.user_data:
-                vid = context.user_data['pending_video']
-                if vid in VIDEOS:
-                    track_video_view(vid)
-                    await query.message.reply_video(
-                        VIDEOS[vid],
-                        caption=f"✅ <b>Here's your video!</b>\n\n🔔 {CONTENT_CHANNEL}",
-                        parse_mode=ParseMode.HTML
-                    )
-                del context.user_data['pending_video']
         else:
-            await query.answer(
-                "❌ Abhi bhi channels join nahi kiye! Pehle join karo.",
-                show_alert=True
-            )
-
-# ============================================
-# ADMIN COMMANDS
-# ============================================
-async def add_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Add new video - Admin only"""
-    user_id = update.effective_user.id
-    logger.info(f"Add video command from user {user_id}")
+            await query.answer("❌ Channels join nahi kiye!", show_alert=True)
     
-    if user_id not in ADMIN_IDS:
-        await update.message.reply_text("❌ Unauthorized access!")
+    elif data.startswith("check_"):
+        video_id = data.replace("check_", "")
+        is_member, _ = await check_membership(user_id, context)
+        
+        if is_member and video_id in VIDEOS:
+            track_video_view(video_id, user_id)
+            await query.message.reply_video(
+                video=VIDEOS[video_id],
+                caption=f"✅ Video!",
+                parse_mode=ParseMode.HTML
+            )
+            await query.edit_message_text("✅ Video sent!")
+        else:
+            await query.answer("❌ Error!", show_alert=True)
+    
+    elif data == "help":
+        await help_command(update, context)
+
+# ========== ADD VIDEO ==========
+async def add_video_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in ADMIN_IDS:
         return
     
     if not update.message.video:
         await update.message.reply_text(
-            "📹 <b>Usage:</b>\n"
-            "1. Send a video\n"
-            "2. Add caption: <code>/addvideo video_id</code>",
+            "📹 Send video with caption:\n/addvideo video_id",
             parse_mode=ParseMode.HTML
         )
         return
     
     if not context.args:
-        await update.message.reply_text("❌ Video ID missing! Use: /addvideo [id]")
+        await update.message.reply_text("❌ Missing video ID!")
         return
     
-    vid_id = context.args[0]
-    VIDEOS[vid_id] = update.message.video.file_id
-    save_videos(VIDEOS)
+    video_id = context.args[0]
     
-    bot_username = (await context.bot.get_me()).username
-    share_link = f"https://t.me/{bot_username}?start={vid_id}"
+    if video_id in VIDEOS:
+        await update.message.reply_text(f"⚠️ ID exists: <code>{video_id}</code>", parse_mode=ParseMode.HTML)
+        return
     
-    await update.message.reply_text(
-        f"✅ <b>Video Added Successfully!</b>\n\n"
-        f"🆔 Video ID: <code>{vid_id}</code>\n"
-        f"🔗 Share Link:\n<code>{share_link}</code>\n\n"
-        f"📊 Total Videos: {len(VIDEOS)}",
-        parse_mode=ParseMode.HTML
-    )
-    logger.info(f"Admin {user_id} added video {vid_id}")
+    file_id = update.message.video.file_id
+    VIDEOS[video_id] = file_id
+    
+    if save_videos(VIDEOS):
+        bot_username = (await context.bot.get_me()).username
+        link = f"https://t.me/{bot_username}?start={video_id}"
+        
+        await update.message.reply_text(
+            f"✅ <b>Video Added!</b>\n\n"
+            f"🆔 ID: <code>{video_id}</code>\n"
+            f"🔗 Link:\n<code>{link}</code>\n\n"
+            f"📊 Total: {len(VIDEOS)}",
+            parse_mode=ParseMode.HTML
+        )
+        logger.info(f"Video added: {video_id}")
+    else:
+        await update.message.reply_text("❌ Save error!")
 
-async def list_videos(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """List all videos - Admin only"""
-    user_id = update.effective_user.id
-    logger.info(f"List videos command from user {user_id}")
-    
-    if user_id not in ADMIN_IDS:
+# ========== LIST VIDEOS ==========
+async def list_videos_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in ADMIN_IDS:
         return
     
     if not VIDEOS:
-        await update.message.reply_text("❌ No videos in database!")
+        await update.message.reply_text("❌ No videos!")
         return
     
-    video_list = "\n".join([f"• <code>{vid}</code>" for vid in list(VIDEOS.keys())[:50]])
+    video_list = []
+    for idx, vid_id in enumerate(sorted(VIDEOS.keys())[:30], 1):
+        views = STATS["video_views"].get(vid_id, 0)
+        video_list.append(f"{idx}. <code>{vid_id}</code> - 👁 {views}")
     
+    text = "\n".join(video_list)
     await update.message.reply_text(
-        f"📹 <b>Video Database ({len(VIDEOS)} videos):</b>\n\n{video_list}",
+        f"📹 <b>Videos ({len(VIDEOS)}):</b>\n\n{text}",
         parse_mode=ParseMode.HTML
     )
 
-async def delete_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Delete video - Admin only"""
-    user_id = update.effective_user.id
-    logger.info(f"Delete video command from user {user_id}")
-    
-    if user_id not in ADMIN_IDS:
+# ========== SEARCH VIDEO ==========
+async def search_video_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in ADMIN_IDS:
         return
     
     if not context.args:
-        await update.message.reply_text("❌ Usage: /delvideo [video_id]")
+        await update.message.reply_text("Usage: /search keyword")
         return
     
-    vid = context.args[0]
+    keyword = " ".join(context.args).lower()
+    results = [v for v in VIDEOS.keys() if keyword in v.lower()]
     
-    if vid in VIDEOS:
-        del VIDEOS[vid]
-        save_videos(VIDEOS)
+    if results:
+        text = "\n".join([f"• <code>{v}</code>" for v in results[:20]])
         await update.message.reply_text(
-            f"✅ <b>Video Deleted!</b>\n\n"
-            f"🗑️ Removed: <code>{vid}</code>\n"
-            f"📊 Remaining: {len(VIDEOS)} videos",
+            f"🔍 <b>Results ({len(results)}):</b>\n\n{text}",
             parse_mode=ParseMode.HTML
         )
-        logger.info(f"Admin deleted video {vid}")
     else:
-        await update.message.reply_text(f"❌ Video ID <code>{vid}</code> not found!", parse_mode=ParseMode.HTML)
+        await update.message.reply_text("❌ No results!")
 
-async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show bot statistics - Admin only"""
-    user_id = update.effective_user.id
-    logger.info(f"Stats command from user {user_id}")
+# ========== DELETE VIDEO ==========
+async def delete_video_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in ADMIN_IDS:
+        return
     
-    if user_id not in ADMIN_IDS:
+    if not context.args:
+        await update.message.reply_text("Usage: /delvideo video_id")
+        return
+    
+    video_id = context.args[0]
+    
+    if video_id in VIDEOS:
+        del VIDEOS[video_id]
+        save_videos(VIDEOS)
+        await update.message.reply_text(
+            f"✅ Deleted: <code>{video_id}</code>\n\nRemaining: {len(VIDEOS)}",
+            parse_mode=ParseMode.HTML
+        )
+    else:
+        await update.message.reply_text("❌ Not found!")
+
+# ========== STATS ==========
+async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in ADMIN_IDS:
         return
     
     total_views = sum(STATS["video_views"].values())
-    total_requests = sum(u.get("total_requests", 0) for u in STATS["user_activity"].values())
+    avg = total_views // len(VIDEOS) if VIDEOS else 0
     
-    stats_text = (
-        "📊 <b>Bot Statistics:</b>\n\n"
-        f"👥 Total Users: {len(STATS['total_users'])}\n"
-        f"🎥 Total Videos: {len(VIDEOS)}\n"
-        f"👀 Total Views: {total_views}\n"
-        f"📊 Total Requests: {total_requests}\n"
-        f"📅 Database Size: {len(STATS['user_activity'])} users tracked"
+    text = (
+        f"📊 <b>STATS</b>\n\n"
+        f"👥 Users: {len(STATS['total_users'])}\n"
+        f"🎥 Videos: {len(VIDEOS)}\n"
+        f"👁 Views: {total_views}\n"
+        f"📈 Avg: {avg}"
     )
-    
-    await update.message.reply_text(stats_text, parse_mode=ParseMode.HTML)
+    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
 
-async def daily_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show daily statistics - Admin only"""
-    user_id = update.effective_user.id
-    logger.info(f"Daily stats command from user {user_id}")
-    
-    if user_id not in ADMIN_IDS:
-        return
-    
-    today = datetime.now().strftime("%Y-%m-%d")
-    daily = STATS.get("daily_stats", {}).get(today, {"users": set(), "requests": 0})
-    
-    stats_text = (
-        f"📅 <b>Today's Statistics ({today}):</b>\n\n"
-        f"👥 Active Users: {len(daily.get('users', set()))}\n"
-        f"📊 Total Requests: {daily.get('requests', 0)}"
-    )
-    
-    await update.message.reply_text(stats_text, parse_mode=ParseMode.HTML)
-
-async def top_videos(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show top viewed videos - Admin only"""
-    user_id = update.effective_user.id
-    logger.info(f"Top videos command from user {user_id}")
-    
-    if user_id not in ADMIN_IDS:
+# ========== TOP VIDEOS ==========
+async def top_videos_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in ADMIN_IDS:
         return
     
     if not STATS["video_views"]:
-        await update.message.reply_text("❌ No video views yet!")
+        await update.message.reply_text("❌ No views yet!")
         return
     
     sorted_vids = sorted(STATS["video_views"].items(), key=lambda x: x[1], reverse=True)[:10]
-    text = "\n".join([f"{i+1}. <code>{v}</code> - {c} views" for i, (v, c) in enumerate(sorted_vids)])
+    
+    top_list = []
+    for idx, (vid, views) in enumerate(sorted_vids, 1):
+        medal = "🥇" if idx == 1 else "🥈" if idx == 2 else "🥉" if idx == 3 else f"{idx}."
+        top_list.append(f"{medal} <code>{vid}</code> - {views}")
+    
+    text = "\n".join(top_list)
+    await update.message.reply_text(f"🏆 <b>TOP 10:</b>\n\n{text}", parse_mode=ParseMode.HTML)
+
+# ========== USERS COUNT ==========
+async def users_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in ADMIN_IDS:
+        return
     
     await update.message.reply_text(
-        f"🏆 <b>Top 10 Videos:</b>\n\n{text}",
+        f"👥 <b>Total Users: {len(STATS['total_users'])}</b>",
         parse_mode=ParseMode.HTML
     )
 
-async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Broadcast message to all users - Admin only"""
-    user_id = update.effective_user.id
-    logger.info(f"Broadcast command from user {user_id}")
+# ========== RECENT ACTIVITY ==========
+async def recent_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in ADMIN_IDS:
+        return
     
-    if user_id not in ADMIN_IDS:
+    recent = sorted(
+        STATS['user_activity'].items(),
+        key=lambda x: x[1].get('last_seen', ''),
+        reverse=True
+    )[:10]
+    
+    if not recent:
+        await update.message.reply_text("❌ No activity!")
+        return
+    
+    recent_list = []
+    for uid, act in recent:
+        last = datetime.fromisoformat(act['last_seen'])
+        mins = (datetime.now() - last).seconds // 60
+        time_str = f"{mins}m" if mins < 60 else f"{mins//60}h"
+        recent_list.append(f"• <code>{uid}</code> - {time_str} ago")
+    
+    text = "\n".join(recent_list)
+    await update.message.reply_text(f"🕐 <b>RECENT:</b>\n\n{text}", parse_mode=ParseMode.HTML)
+
+# ========== BROADCAST ==========
+async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in ADMIN_IDS:
         return
     
     if not context.args:
-        await update.message.reply_text(
-            "📢 <b>Usage:</b>\n<code>/broadcast Your message here</code>",
-            parse_mode=ParseMode.HTML
-        )
+        await update.message.reply_text("Usage: /broadcast message")
         return
     
-    msg = " ".join(context.args)
+    message = " ".join(context.args)
     success = 0
-    failed = 0
     
-    status_msg = await update.message.reply_text("📤 Broadcasting... 0%")
+    await update.message.reply_text("📤 Broadcasting...")
     
-    total_users = len(STATS["total_users"])
-    for i, user_id in enumerate(STATS["total_users"]):
+    for uid in STATS["total_users"]:
         try:
-            await context.bot.send_message(
-                user_id,
-                f"📢 <b>Announcement:</b>\n\n{msg}",
-                parse_mode=ParseMode.HTML
-            )
+            await context.bot.send_message(uid, f"📢 {message}")
             success += 1
-        except Exception as e:
-            failed += 1
-            logger.error(f"Broadcast failed for {user_id}: {e}")
-        
-        # Update progress every 10 users
-        if i % 10 == 0:
-            progress = int((i / total_users) * 100)
-            try:
-                await status_msg.edit_text(f"📤 Broadcasting... {progress}%")
-            except:
-                pass
+        except:
+            pass
     
-    await status_msg.edit_text(
-        f"✅ <b>Broadcast Complete!</b>\n\n"
-   
+    await update.message.reply_text(f"✅ Sent to {success} users!")
+
+# ========== BACKUP ==========
+async def backup_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in ADMIN_IDS:
+        return
+    
+    try:
+        await update.message.reply_document(
+            document=open(DB_FILE, 'rb'),
+            caption=f"📁 Videos: {len(VIDEOS)}"
+        )
+        await update.message.reply_document(
+            document=open(STATS_FILE, 'rb'),
+            caption=f"📊 Users: {len(STATS['total_users'])}"
+        )
+        await update.message.reply_text("✅ Backup done!")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error: {e}")
+
+# ========== MAIN ==========
+def main():
+    logger.info("=" * 50)
+    logger.info("🤖 Bot Starting...")
+    logger.info(f"📊 Videos: {len(VIDEOS)}")
+    logger.info(f"👥 Users: {len(STATS['total_users'])}")
+    logger.info("=" * 50)
+    
+    app = Application.builder().token(BOT_TOKEN).build()
+    
+    # User commands
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("about", about_command))
+    app.add_handler(CommandHandler("myactivity", my_activity_command))
+    
+    # Admin commands
+    app.add_handler(CommandHandler("addvideo", add_video_command))
+    app.add_handler(CommandHandler("videos", list_videos_command))
+    app.add_handler(CommandHandler("search", search_video_command))
+    app.add_handler(CommandHandler("delvideo", delete_video_command))
+    app.add_handler(CommandHandler("stats", stats_command))
+    app.add_handler(CommandHandler("topvideos", top_videos_command))
+    app.add_handler(CommandHandler("users", users_command))
+    app.add_handler(CommandHandler("recent", recent_command))
+    app.add_handler(CommandHandler("broadcast", broadcast_command))
+    app.add_handler(CommandHandler("backup", backup_command))
+    
+    app.add_handler(CallbackQueryHandler(button_callback))
+    
+    logger.info("✅ Bot started!")
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
+
+if __name__ == '__main__':
+    main()
