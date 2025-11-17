@@ -1,0 +1,8 @@
+videos_db.json
+stats_db.json
+*.pyc
+__pycache__/
+.env
+venv/
+*.log
+.DS_Store
